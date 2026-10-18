@@ -1,0 +1,19 @@
+esp32_base_driver:
+  ros__parameters:
+    port: /dev/serial0         # Raspberry Pi 4
+    baud: 115200
+    wheel_diameter: 0.095      # m
+    #wheel_diameter: 0.10896
+    wheel_separation: 0.3890    # m (do duoc 39.0 - 39.1 cm)
+    ticks_per_rev: 998.4       # da la che do x4
+    # Do that: 279.4 rpm @PWM1023 khong tai = 1.39 m/s.
+    # Co tai se thap hon, va can du tru cho PID bam kip -> gioi han 0.80.
+    max_linear: 0.80           # m/s
+    max_angular: 2.0           # rad/s (0.80 m/s / (0.390/2) = 4.1 la gioi han cung)
+    cmd_rate: 20.0             # Hz
+    cmd_timeout: 0.5           # s
+    publish_tf: true           # dat false neu dung robot_localization
+    odom_frame: odom
+    base_frame: base_link
+    left_joint: left_wheel_joint
+    right_joint: right_wheel_joint

@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Cau noi giua ROS 2 va firmware ESP32-S3 (ban Raspberry Pi 4).
+
+Subscribe : /cmd_vel        (geometry_msgs/Twist)
+Publish   : /odom           (nav_msgs/Odometry)
+            /joint_states   (sensor_msgs/JointState)
+            TF odom -> base_link  (tat duoc neu dung robot_localization)
+
+Doc serial bang timer 200 Hz thay vi thread rieng: it cho hong hon, va
+giong cau truc uart_check_pi.py da chay on dinh.
+"""
+import math
+
+import rclpy
+import serial
+from geometry_msgs.msg import Quaternion, Twist, TransformStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import JointState
+from tf2_ros import TransformBroadcaster
+
+
+def yaw_to_quat(yaw: float) -> Quaternion:
+    q = Quaternion()
+    q.z = math.sin(yaw * 0.5)
+    q.w = math.cos(yaw * 0.5)
+    return q
+
+
+class Esp32BaseNode(Node):
+    POLL_HZ = 200.0          # tan so doc serial
+
+    def __init__(self) -> None:
+        super().__init__("esp32_base_driver")
+
+        p = self.declare_parameter
+        p("port", "/dev/ttyS0")
+        p("baud", 115200)
+        p("wheel_diameter", 0.095)
+        p("wheel_separation", 0.389)
+        p("ticks_per_rev", 998.4)          # da la che do x4
+        p("max_linear", 0.80)              # m/s
+        p("max_angular", 2.0)              # rad/s
+        p("cmd_rate", 20.0)                # Hz gui xuong ESP32
+        p("cmd_timeout", 0.5)              # s khong co cmd_vel -> gui 0
+        p("publish_tf", True)
+        p("odom_frame", "odom")
+        p("base_frame", "base_link")
+        p("left_joint", "left_wheel_joint")
+        p("right_joint", "right_wheel_joint")
+
+        g = lambda n: self.get_parameter(n).value  # noqa: E731
+        self.port = g("port")
+        self.baud = int(g("baud"))
+        self.wheel_sep = float(g("wheel_separation"))
+        self.max_lin = float(g("max_linear"))
+        self.max_ang = float(g("max_angular"))
+        self.cmd_timeout = float(g("cmd_timeout"))
+        self.publish_tf = bool(g("publish_tf"))
+        self.odom_frame = g("odom_frame")
+        self.base_frame = g("base_frame")
+        self.left_joint = g("left_joint")
+        self.right_joint = g("right_joint")
+
+        diam = float(g("wheel_diameter"))
+        self.wheel_radius = diam * 0.5
+        self.m_per_tick = (math.pi * diam) / float(g("ticks_per_rev"))
+
+        # trang thai odom
+        self.x = self.y = self.th = 0.0
+        self.vx = self.wz = 0.0
+        self.pos_l = self.pos_r = 0.0
+        self.last_tl = self.last_tr = None
+        self.last_stamp = None
+
+        self.cmd_v = self.cmd_w = 0.0
+        self.last_cmd_time = self.get_clock().now()
+
+        self.ser = None
+        self.buf = bytearray()
+        self.n_odom = 0
+        self.warned_silent = False
+        self.open_port()
+
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self.odom_pub = self.create_publisher(Odometry, "odom", qos)
+        self.js_pub = self.create_publisher(JointState, "joint_states", qos)
+        self.create_subscription(Twist, "cmd_vel", self.on_cmd_vel, qos)
+        self.tf_br = TransformBroadcaster(self)
+
+        self.create_timer(1.0 / self.POLL_HZ, self.poll_serial)
+        self.create_timer(1.0 / float(g("cmd_rate")), self.tx_loop)
+        self.create_timer(3.0, self.health_check)
+
+    # -------------------------------------------------- serial
+    def open_port(self) -> bool:
+        try:
+            self.ser = serial.Serial(
+                port=self.port, baudrate=self.baud,
+                bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE, timeout=0, write_timeout=1.0,
+            )
+            self.ser.reset_input_buffer()
+            self.ser.reset_output_buffer()
+            self.get_logger().info(f"Da mo {self.port} @ {self.baud} 8N1")
+            self.ser.write(b"Z\n")
+            return True
+        except serial.SerialException as e:
+            self.get_logger().error(f"Khong mo duoc {self.port}: {e}")
+            self.ser = None
+            return False
+
+    def poll_serial(self) -> None:
+        if self.ser is None:
+            self.open_port()
+            return
+        try:
+            n = self.ser.in_waiting
+            data = self.ser.read(n) if n else b""
+        except (serial.SerialException, OSError) as e:
+            self.get_logger().error(f"Mat ket noi: {e}")
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+            self.buf.clear()
+            return
+
+        if not data:
+            return
+        self.buf.extend(data)
+        while b"\n" in self.buf:
+            raw, _, rest = self.buf.partition(b"\n")
+            self.buf = bytearray(rest)
+            line = raw.decode("utf-8", errors="replace").strip()
+            if line:
+                self.handle_line(line)
+        if len(self.buf) > 512:
+            self.get_logger().warn("Buffer tran, xoa bo dem")
+            self.buf.clear()
+
+    def write(self, s: str) -> None:
+        if self.ser is None:
+            return
+        try:
+            self.ser.write(s.encode("ascii", errors="ignore"))
+        except (serial.SerialException, serial.SerialTimeoutException) as e:
+            self.get_logger().error(f"Loi ghi: {e}")
+
+    def health_check(self) -> None:
+        """Canh bao mot lan neu khong co odom - thuong la sai cong hoac dut day."""
+        if self.n_odom == 0 and not self.warned_silent:
+            self.warned_silent = True
+            self.get_logger().error(
+                f"Khong nhan duoc dong odom nao tu {self.port}. "
+                "Kiem tra day TX/RX cheo nhau, GND chung, va firmware dang bat odom "
+                "(bam 'k' tren monitor USB xem odom=1).")
+
+    # -------------------------------------------------- cmd_vel
+    def on_cmd_vel(self, msg: Twist) -> None:
+        self.cmd_v = max(-self.max_lin, min(self.max_lin, msg.linear.x))
+        self.cmd_w = max(-self.max_ang, min(self.max_ang, msg.angular.z))
+        self.last_cmd_time = self.get_clock().now()
+
+    def tx_loop(self) -> None:
+        age = (self.get_clock().now() - self.last_cmd_time).nanoseconds * 1e-9
+        v, w = (0.0, 0.0) if age > self.cmd_timeout else (self.cmd_v, self.cmd_w)
+        self.write(f"V {v:.4f} {w:.4f}\n")
+
+    # -------------------------------------------------- odom
+    def handle_line(self, line: str) -> None:
+        if not line.startswith("O "):
+            self.get_logger().info(f"ESP32: {line}")
+            return
+        parts = line.split()
+        if len(parts) != 6:
+            return
+        try:
+            vl, vr = float(parts[2]), float(parts[3])
+            tl, tr = int(parts[4]), int(parts[5])
+        except ValueError:
+            return
+        self.n_odom += 1
+        self.update_odom(vl, vr, tl, tr)
+
+    def update_odom(self, vl: float, vr: float, tl: int, tr: int) -> None:
+        now = self.get_clock().now()
+        if self.last_tl is None:
+            self.last_tl, self.last_tr, self.last_stamp = tl, tr, now
+            return
+
+        dt = (now - self.last_stamp).nanoseconds * 1e-9
+        if dt <= 0.0:
+            return
+        self.last_stamp = now
+
+        dl = (tl - self.last_tl) * self.m_per_tick
+        dr = (tr - self.last_tr) * self.m_per_tick
+        self.last_tl, self.last_tr = tl, tr
+
+        d = 0.5 * (dl + dr)
+        dth = (dr - dl) / self.wheel_sep
+
+        th_mid = self.th + 0.5 * dth              # tich phan dung diem giua
+        self.x += d * math.cos(th_mid)
+        self.y += d * math.sin(th_mid)
+        self.th = math.atan2(math.sin(self.th + dth), math.cos(self.th + dth))
+
+        self.vx = 0.5 * (vl + vr)
+        self.wz = (vr - vl) / self.wheel_sep
+        self.pos_l += dl / self.wheel_radius
+        self.pos_r += dr / self.wheel_radius
+
+        stamp = now.to_msg()
+        odom = Odometry()
+        odom.header.stamp = stamp
+        odom.header.frame_id = self.odom_frame
+        odom.child_frame_id = self.base_frame
+        odom.pose.pose.position.x = self.x
+        odom.pose.pose.position.y = self.y
+        odom.pose.pose.orientation = yaw_to_quat(self.th)
+        odom.twist.twist.linear.x = self.vx
+        odom.twist.twist.angular.z = self.wz
+
+        moving = abs(self.vx) > 1e-3 or abs(self.wz) > 1e-3
+        pc = 0.05 if moving else 1e-4
+        tc = 0.02 if moving else 1e-4
+        odom.pose.covariance[0] = pc
+        odom.pose.covariance[7] = pc
+        odom.pose.covariance[35] = tc
+        odom.twist.covariance[0] = tc
+        odom.twist.covariance[35] = tc
+        for i in (14, 21, 28):                    # z, roll, pitch: khoa cung
+            odom.pose.covariance[i] = 1e6
+            odom.twist.covariance[i] = 1e6
+        self.odom_pub.publish(odom)
+
+        if self.publish_tf:
+            tf = TransformStamped()
+            tf.header.stamp = stamp
+            tf.header.frame_id = self.odom_frame
+            tf.child_frame_id = self.base_frame
+            tf.transform.translation.x = self.x
+            tf.transform.translation.y = self.y
+            tf.transform.rotation = odom.pose.pose.orientation
+            self.tf_br.sendTransform(tf)
+
+        js = JointState()
+        js.header.stamp = stamp
+        js.name = [self.left_joint, self.right_joint]
+        js.position = [self.pos_l, self.pos_r]
+        js.velocity = [vl / self.wheel_radius, vr / self.wheel_radius]
+        self.js_pub.publish(js)
+
+    def stop_motors(self) -> None:
+        try:
+            self.write("S\n")
+            if self.ser:
+                self.ser.flush()
+        except Exception:
+            pass
+
+
+def main() -> None:
+    rclpy.init()
+    node = Esp32BaseNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.stop_motors()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

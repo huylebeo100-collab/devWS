@@ -1,0 +1,39 @@
+# Toa do cac diem tren map.
+#
+# Lay bang:  ros2 run tf2_ros tf2_echo map base_link
+#   x, y   <- dong "Translation"
+#   yaw    <- so THU BA cua dong "Rotation: in RPY (radian)"
+#
+# dwell = so giay dung lai tai diem do (bo qua = 0)
+#
+# LUU Y: lay toa do o cho xe THAT SU DUNG, khong phai cho ban bam goal.
+#        xy_goal_tolerance la 0.20 m nen hai cho do co the lech nhau.
+
+points:
+  start:
+    x: 0.00
+    y: 0.00
+    yaw: 0.002
+
+  A:
+    x: 3.019
+    y: -1.998
+    yaw: -1.444
+    dwell: 15
+
+  B:
+    x: 3.005
+    y: -8.866
+    yaw: -2.897
+    dwell: 15
+
+  C:
+    x: -0.078
+    y: -9.872
+    yaw: -0.093
+    dwell: 15
+
+  end:
+    x: 0.00
+    y: 0.00
+    yaw: 0.00
