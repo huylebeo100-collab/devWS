@@ -81,7 +81,7 @@ def generate_launch_description():
             "wheel_diameter": 0.095,
             "wheel_separation": 0.389,
             "ticks_per_rev": 998.4,
-            "publish_tf": True,
+            "publish_tf": False, #True nếu k dùng EKF
         }],
     )
 
@@ -105,6 +105,24 @@ def generate_launch_description():
         }],
     )
 
+    # IMU BNO055 (I2C bus 1, dia chi 0x29)
+    imu_node = Node(
+        package="bno055",
+        executable="bno055",
+        name="bno055",
+        output="screen",
+        parameters=[os.path.join(package_share, "config", "bno055.yaml")],
+    )
+
+    # EKF: tron /odom + /bno055/imu -> /odometry/filtered + TF odom->base_link
+    ekf_node = Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        output="screen",
+        parameters=[os.path.join(package_share, "config", "ekf_real.yaml")],
+    )
+
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -121,6 +139,8 @@ def generate_launch_description():
         robot_state_publisher_node,
         base_node,
         lidar_node,
+        imu_node,
+        ekf_node,
     ]
 
     return LaunchDescription(nodes)

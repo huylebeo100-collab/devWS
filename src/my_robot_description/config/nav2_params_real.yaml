@@ -50,7 +50,7 @@ amcl:
     alpha5: 0.1
 
     update_min_d: 0.05
-    update_min_a: 0.05
+    update_min_a: 0.05 #old 0.05
     resample_interval: 1
 
     sigma_hit: 0.15
@@ -75,9 +75,11 @@ bt_navigator:
     use_sim_time: false
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /odom
+    odom_topic: /odometry/filtered
     bt_loop_duration: 25
-    default_server_timeout: 20
+    default_server_timeout: 200
+    #Thêm mới bt_nav
+    default_nav_to_pose_bt_xml: "/root/dev2v/dev2v/install/my_robot_description/share/my_robot_description/behavior_trees/navigate_wait_first.xml"
     # DA BO: enable_stamped_cmd_vel (khong co trong Humble)
     # DA BO: navigators / nav2_bt_navigator::... (cu phap Iron tro len)
 
@@ -85,7 +87,7 @@ controller_server:
   ros__parameters:
     use_sim_time: false
     controller_frequency: 10.0
-    odom_topic: /odom
+    odom_topic: /odometry/filtered
     failure_tolerance: 0.3
 
     min_x_velocity_threshold: 0.001
@@ -103,71 +105,35 @@ controller_server:
 
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.06
-      yaw_goal_tolerance: 0.12
+      xy_goal_tolerance: 0.05
+      yaw_goal_tolerance: 0.10
       stateful: true
 
     FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: false
-
-      # ==============================================================
-      #  GIOI HAN VAN TOC - phan khac nhieu nhat giua sim va that.
-      #  Gia tri duoi la diem KHOI DAU an toan, khong phai gia tri cuoi.
-      #  Do lai bang teleop roi chinh (xem README).
-      # ==============================================================
-      min_vel_x: 0.0
-      max_vel_x: 0.20
-      min_vel_y: 0.0
-      max_vel_y: 0.0
-      max_vel_theta: 0.45
-
-      min_speed_xy: 0.0
-      max_speed_xy: 0.20
-      # SUA: 0.0 -> 0.18
-      # De 0.0 thi DWB co the ra lenh quay 0.02 rad/s, deadband PWM
-      # 150/160 nuot mat, xe dung im, progress_checker bao that bai.
-      min_speed_theta: 0.10
-
-      acc_lim_x: 0.35
-      acc_lim_y: 0.0
-      acc_lim_theta: 0.8
-      decel_lim_x: -1.0
-      decel_lim_y: 0.0
-      decel_lim_theta: -1.0
-
-      vx_samples: 20
-      vy_samples: 1
-      vtheta_samples: 40 
-
-      sim_time: 2.0
-      linear_granularity: 0.05
-      angular_granularity: 0.025
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.30
+      lookahead_dist: 0.5
+      min_lookahead_dist: 0.3
+      max_lookahead_dist: 0.8
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: true
       transform_tolerance: 0.3
-
-      xy_goal_tolerance: 0.06
-      trans_stopped_velocity: 0.05
-      short_circuit_trajectory_evaluation: true
-      stateful: true
-
-      critics:
-        - RotateToGoal
-        - Oscillation
-        - BaseObstacle
-        - GoalAlign
-        - PathAlign
-        - PathDist
-        - GoalDist
-
-      BaseObstacle.scale: 0.06 ####### 0.3
-      PathAlign.scale: 32.0 ####### 12
-      GoalAlign.scale: 20.0 ####### 18
-      PathDist.scale: 32.0 ####### 12
-      GoalDist.scale: 20.0 ####### 18
-      RotateToGoal.scale: 32.0 ####### 24
-      ####    Mới    ####
-      PathAlign.forward_point_distance: 0.1    # them moi
-      GoalAlign.forward_point_distance: 0.1    # them moi
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.05
+      inflation_cost_scaling_factor: 5.0        # bằng cost_scaling_factor của local costmap
+      use_rotate_to_heading: true
+      rotate_to_heading_angular_vel: 0.4        # dưới 0.45 của velocity_smoother, trên 0.12 ngưỡng quay tại chỗ
+      rotate_to_heading_min_angle: 0.785
+      max_angular_accel: 0.8
+      allow_reversing: false
+      max_robot_pose_search_dist: 10.0
+      use_interpolation: true
 
 local_costmap:
   local_costmap:
@@ -270,7 +236,7 @@ planner_server:
       #   Humble: nav2_navfn_planner/NavfnPlanner
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.3
-      use_astar: false
+      use_astar: true   # true= A*
       allow_unknown: true
 
 smoother_server:
@@ -336,7 +302,7 @@ velocity_smoother:
     scale_velocities: false
     feedback: "OPEN_LOOP"
 
-    max_velocity: [0.20, 0.0, 0.45]
+    max_velocity: [0.30, 0.0, 0.45]
     min_velocity: [-0.15, 0.0, -0.45]
     max_accel: [0.35, 0.0, 0.8]
     max_decel: [-1.0, 0.0, -1.0]
@@ -355,7 +321,7 @@ velocity_smoother:
     # ==================================================================
     deadband_velocity: [0.0, 0.0, 0.0]
 
-    odom_topic: /odom
+    odom_topic: /odometry/filtered
     odom_duration: 0.1
     velocity_timeout: 1.0
 

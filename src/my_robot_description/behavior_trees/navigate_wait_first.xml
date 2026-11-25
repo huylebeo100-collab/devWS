@@ -1,0 +1,43 @@
+<!--
+  Ban sua tu navigate_to_pose_w_replanning_and_recovery.xml (Humble).
+  Khac ban goc: khi bi chan thi CHO + xoa costmap truoc,
+  lui va quay chi la phuong an cuoi (hop voi loi di kho hep).
+  Thu tu recovery: Cho 5s -> Cho 5s -> Lui 0.15m -> Quay 90 do -> lap lai.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
+                                service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-Context"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearAndWait1">
+            <ClearEntireCostmap name="ClearLocal-1" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobal-1" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <Wait wait_duration="5"/>
+          </Sequence>
+          <Sequence name="ClearAndWait2">
+            <ClearEntireCostmap name="ClearLocal-2" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobal-2" service_name="global_costmap/clear_entirely_global_costmap"/>
+            <Wait wait_duration="5"/>
+          </Sequence>
+          <BackUp backup_dist="0.15" backup_speed="0.05"/>
+          <Spin spin_dist="1.57"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

@@ -1,0 +1,24 @@
+mission_manager:
+  ros__parameters:
+    # File tram + mission. De trong ~/amr_ws (da mount ra host) de sua tu host va
+    # de /mission/save_station ghi duoc, khong mat khi xoa container.
+    stations_file: /root/dev2v/dev2v/src/amr_mission/config/stations.yaml
+
+    # ---- QR tu amr_vision (qua rosbridge) ----
+    qr_topic: /vision/qr        # TODO: doi theo topic that cua amr_vision
+    qr_json_key: ""             # "" = tu nhan raw text hoac JSON {text|qr|data|value|payload|code}
+                                # vi du JSON {"qr":{"text":"A"}} thi dat "qr.text"
+    qr_prefix: ""               # dat "AMR:" de chi nhan QR dang AMR:A, bo qua QR pallet
+    qr_wait_s: 5.0              # dung o tram dich bao lau roi ve; -1 = cho /mission/confirm
+    qr_rearm_s: 5.0             # ve toi vi tri cho, bo qua moi QR trong N s
+    qr_gap_s: 2.0               # QR phai bien mat >= N s moi kich hoat lai (chong QR dan co dinh)
+    home_radius: 0.35           # m, chi nhan QR khi xe cach tram home <= gia tri nay
+
+    # ---- multi-task ----
+    default_wait_s: 5.0         # wait mac dinh moi diem neu request khong ghi
+    nav_retries: 1              # goal that bai thi thu lai them N lan roi vao ERROR
+
+    map_frame: map
+    base_frame: base_link
+    nav_action: navigate_to_pose
+    dry_run_nav_s: 3.0          # dry_run: gia lap moi chang mat N s

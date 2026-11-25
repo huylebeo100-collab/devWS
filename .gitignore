@@ -1,15 +1,10 @@
-# colcon
 build/
 install/
 log/
-
-# python
 __pycache__/
 *.pyc
-
-# rosbag, file tạm
+*.egg-info/
+rosbag2_*/
 *.db3
 *.mcap
-rosbag2_*/
-*.swp
 .vscode/

@@ -1,0 +1,42 @@
+home_station: home
+stations:
+  start:
+    x: 0
+    y: 0
+    yaw: 0
+  home:
+    x: 1.256
+    y: -1.347
+    yaw: -1.57
+  A:
+    x: 2.868
+    y: -2.047
+    yaw: 0.0
+  B:
+    x: 2.921
+    y: -8.967
+    yaw: -1.57
+  C:
+    x: 0.835
+    y: -10.225
+    yaw: -1.57
+  D:
+    x: 0.0
+    y: 0.0
+    yaw: -0.0
+missions:
+  abc_loop:
+    steps:
+    - A
+    - B
+    - C
+    wait: 10.0
+    return_home: true
+    repeat: 1
+  nhap_kho:
+    steps:
+    - station: A
+      wait: confirm
+    - station: C
+      wait: confirm
+    return_home: true
